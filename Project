@@ -1,0 +1,640 @@
+# FocusOne — App flow & features
+
+> **Context provided:**
+>
+> When you open the app, you see a clean welcome screen. After signing up with email, you land on the main dashboard. Here you see your tasks sorted by AI priority. You can add tasks through quick-add or by chatting with AI. When ready to focus, you enter Focus Mode which blocks notifications and starts a timer. After completing a session, you see your progress and can start another session or take a break.
+
+---
+
+## Table of contents
+
+1. [Overview & goals](#overview--goals)
+2. [High-level user flow](#high-level-user-flow)
+3. [Screen-by-screen specification](#screen-by-screen-specification)
+
+   * Welcome
+   * Auth / Sign up
+   * Onboarding & permissions
+   * Dashboard (Main)
+   * Task detail
+   * Quick Add
+   * AI Chat Add Task
+   * Focus Mode (in session)
+   * Session end / Progress
+   * Settings & Profile
+4. [Data models (JSON examples)](#data-models-json-examples)
+5. [AI-priority scoring — concept & pseudocode](#ai-priority-scoring--concept--pseudocode)
+6. [Focus Mode: technical details & edge cases](#focus-mode-technical-details--edge-cases)
+7. [APIs and backend contract examples](#apis-and-backend-contract-examples)
+8. [Persistence, offline-first & sync strategy](#persistence-offline-first--sync-strategy)
+9. [Notifications & blocking behavior (platform notes)](#notifications--blocking-behavior-platform-notes)
+10. [Security, privacy & compliance notes](#security-privacy--compliance-notes)
+11. [Analytics & events to track](#analytics--events-to-track)
+12. [Accessibility & internationalization](#accessibility--internationalization)
+13. [Testing & QA checklist](#testing--qa-checklist)
+14. [Implementation roadmap & phases (MVP → 2.0 → 3.0)](#implementation-roadmap--phases-mvp--20--30)
+15. [Developer component list & technical recommendations](#developer-component-list--technical-recommendations)
+16. [Acceptance criteria & examples](#acceptance-criteria--examples)
+
+---
+
+## 1. Overview & goals
+
+**Goal:** Build a mobile-first (React Native / Flutter / native) productivity app that helps users focus on one task at a time. The app prioritizes tasks using an AI-driven score and makes starting focused work frictionless via a quick-add and chat interface.
+
+**Core principles**
+
+* Minimal friction: add or start a task within 2 taps.
+* Single-task focus: reduce context switching; the UI always surfaces one active task for focus.
+* Transparent AI: AI helps score & suggest but user controls final decisions.
+* Privacy-first: default to local storage; give clear opt-in for cloud/analytics.
+
+---
+
+## 2. High-level user flow
+
+1. **Welcome screen**: Clean, minimal. CTAs: Sign up / Sign in (email).
+2. **Auth**: Email sign-up (passwordless or password) → verification email optionally.
+3. **Onboarding**: Ask for a few preferences (default focus length, notification preferences, task import). Ask permission to send notifications (local) and explain Focus Mode behavior.
+4. **Main Dashboard**: Shows tasks sorted by AI priority. Quick-add input and floating AI chat button available.
+5. **Create/Refine tasks**: via Quick-add (instant) or AI chat (convert text/notes into structured tasks).
+6. **Start Focus Mode**: Choose a task and press Start. Enter Focus Mode: full-screen timer, blocked in-app notifications, background-safe timer implementation.
+7. **Session end**: Show progress modal, session summary, options: Start next session / Take break / Mark complete.
+8. **Analytics/Stats**: optional screen for weekly productivity summary and streaks.
+
+---
+
+## 3. Screen-by-screen specification
+
+> For each screen below: **Purpose**, **Layout & components**, **Interactions**, **States**, **Acceptance criteria**.
+
+### A — Welcome screen
+
+**Purpose:** First impression; guide to sign up.
+
+**Layout & components**
+
+* App logo & tagline
+* Primary CTA: `Sign up with email`
+* Secondary CTA: `Sign in`
+* Optional: `Continue as guest` (if supported)
+* Small footer: `Privacy policy` / `Terms`
+
+**Interactions**
+
+* Tap `Sign up` → go to Auth screen.
+* Tap `Sign in` → login screen.
+
+**States**
+
+* Default, Loading when performing network auth.
+
+**Acceptance**
+
+* CTA visible and tappable. Animation or micro-interaction on CTA.
+
+---
+
+### B — Auth / Sign up (email)
+
+**Purpose:** Create account using email (passwordless or password).
+
+**Layout & components**
+
+* Fields: `Name` (optional), `Email`, `Password` (or request one-time code), `Sign up` button
+* `Already have account? Sign in` link
+
+**Interactions**
+
+* Field validation (email format). Show errors inline.
+* `Sign up` → POST /auth/signup; show loading and handle errors.
+
+**States**
+
+* Success → go to onboarding
+* Error → show message (e.g., `Email already registered`)
+
+**Acceptance**
+
+* Email validation, secure handling, and clear error messages.
+
+---
+
+### C — Onboarding & permissions
+
+**Purpose:** Collect minimal preferences and request local notification permissions.
+
+**Layout & components**
+
+* Step 1: Focus length (25 / 50 / Custom)
+* Step 2: Daily goal (number of sessions)
+* Step 3: Notification permissions explanation + ask for permission
+* Optional: Import tasks (from calendar, todos)
+
+**Interactions**
+
+* Save preferences locally & remotely
+* If user denies notification permission, show fallback: local in-app timers & banners
+
+**Acceptance**
+
+* Preferences saved, permission flows handled gracefully.
+
+---
+
+### D — Main Dashboard (Tasks sorted by AI priority)
+
+**Purpose:** Central hub. Surface tasks and let user start focus quickly.
+
+**Layout & components**
+
+* Top bar: user avatar / settings
+* Quick-add input bar (placeholder: “Quick add — describe your task”) + keyboard shortcut
+* Primary list: `TaskCard` components sorted by `ai_score` descending
+* Each TaskCard shows: title, AI priority badge/score, estimated time (e.g., `25m`), due date (if any), start CTA (`Start`) and overflow menu (Edit / Snooze / Delete)
+* Floating button: `Chat with AI` (opens AI chat modal)
+* Bottom nav: Home / Stats / Settings (optional)
+
+**Interactions**
+
+* Tap `Start` on TaskCard → present `Start focus` confirmation (choose duration) → enter Focus Mode
+* Tap TaskCard → open Task detail
+* Swipe gestures: swipe right to start, swipe left to snooze/delete
+
+**States**
+
+* Empty state: friendly CTA to add first task (Quick-add focus)
+* Loading: skeletons
+* Offline: show local tasks with subtle offline indicator
+
+**Acceptance**
+
+* Tasks are ordered by AI priority. Quick add reduces to a new TaskCard instantly.
+
+---
+
+### E — Task detail
+
+**Purpose:** Full details & options for a task.
+
+**Components**
+
+* Title (editable), description, tags, attachments, estimated time, due date, AI priority score & factors (expandable), history of sessions (past focus sessions), action buttons (Start / Edit / Delete / Mark complete)
+
+**Interactions & states**
+
+* Edit inline with validation
+* When user clicks `Start`, enter pre-focus modal (allow choosing focus length and brief notes)
+
+**Acceptance**
+
+* Changes saved; history shows session count and total time spent.
+
+---
+
+### F — Quick Add
+
+**Purpose:** Lowest friction task capture.
+
+**Behavior**
+
+* A single-line input at top of Dashboard; hitting enter creates task with default metadata (no description). The app runs a light AI parse to extract duration, dates, tags (optional) and fills fields.
+
+**UX**
+
+* Example: user types `Write weekly report 30m due Friday` → app creates a task with title `Write weekly report`, estimated_time `30`, due_date `next Friday`.
+
+**Acceptance**
+
+* New task appears at top (or re-sorted by AI score) immediately.
+
+---
+
+### G — AI Chat Add Task
+
+**Purpose:** Conversational creation & refinement of tasks. Useful for turning notes into structured tasks.
+
+**Flow**
+
+* Floating `Chat with AI` opens modal/drawer.
+* User can paste meeting notes / copy-paste an email / type: `Create tasks from this`.
+* AI suggests task titles, estimates, priority, and optional subtasks. User accepts/refines.
+
+**Design notes**
+
+* Show provenance: which text produced the task.
+* Allow user to edit AI fields before final save.
+
+**Acceptance**
+
+* Chat returns fast suggestions; user can create one or many tasks from the session.
+
+---
+
+### H — Focus Mode (in-session UX)
+
+**Purpose:** Let user focus on a single task with minimal interruptions.
+
+**Layout & components**
+
+* Full-screen modal or dedicated screen
+* Large timer ring and text: `Task title` + remaining time
+* Controls: Pause, End session early, `I’m distracted` (quick log), `Notes` (quick add to task), `Mute / Unmute` sound
+* Small top indicator: `Notifications blocked` (in-app)
+
+**Interactions**
+
+* Start countdown. While running, in-app notification banners suppressed. Local scheduled notifications used as fallback.
+* Pause/resume: preserve time remaining.
+* If timer is backgrounded: rely on OS scheduling + local notifications for completion.
+
+**Edge cases**
+
+* Phone call arrives: pause or let user decide. Provide default: pause on call.
+* App killed by OS: schedule a local notification when the timer completes and mark session end on next launch. Show `session possibly completed while app closed` and let user confirm.
+
+**Acceptance**
+
+* Timer is reliable across app background on both Android and iOS (see platform notes below). UI shows clear controls.
+
+---
+
+### I — Session end & progress summary
+
+**Purpose:** Give immediate feedback and let user continue.
+
+**Components & behavior**
+
+* Modal summary with: `Session complete!` message, session duration, total sessions for this task, time logged today, quick actions: `Start another session`, `Take a break (5/15/30)`, `Mark task complete`, `Add note`.
+* Gamification: show streaks, Pomodoro counts (optional)
+
+**Acceptance**
+
+* Choosing `Start another session` re-enters Focus Mode with same or chosen duration.
+
+---
+
+### J — Settings & profile
+
+**Purpose:** Preferences, account, privacy, integrations
+
+**Minimum items**
+
+* Account (email, log out)
+* Preferences (default focus time, auto-start next session, notifications)
+* AI settings (enable/disable AI suggestions, adjust weights)
+* Data & privacy (export tasks, delete account)
+
+---
+
+## 4. Data models (JSON examples)
+
+### Task (example)
+
+```json
+{
+  "id": "uuid-123",
+  "user_id": "user-uuid",
+  "title": "Write weekly report",
+  "description": "Compile metrics and write the weekly report for the team.",
+  "estimated_minutes": 30,
+  "ai_score": 82.4,
+  "priority": "medium", // user override
+  "due_date": "2025-10-10T09:00:00Z",
+  "tags": ["work", "reports"],
+  "status": "todo", // todo | in_progress | done | snoozed
+  "created_at": "2025-10-03T05:00:00Z",
+  "updated_at": "2025-10-03T05:12:00Z",
+  "session_count": 2
+}
+```
+
+### FocusSession (example)
+
+```json
+{
+  "id": "session-uuid",
+  "task_id": "uuid-123",
+  "user_id": "user-uuid",
+  "start_time": "2025-10-03T05:20:00Z",
+  "end_time": "2025-10-03T05:45:00Z",
+  "duration_minutes": 25,
+  "interrupted": false
+}
+```
+
+### AI priority debug (example)
+
+```json
+{
+  "task_id": "uuid-123",
+  "ai_score": 82.4,
+  "factors": {
+    "due_urgency": 30,
+    "estimated_time": 10,
+    "user_priority": 20,
+    "historical_success": 22.4
+  }
+}
+```
+
+---
+
+## 5. AI-priority scoring — concept & pseudocode
+
+**Inputs (examples):**
+
+* Due date / days until due
+* Estimated time
+* User-set priority (low/medium/high)
+* Tags (work/personal)
+* Historical completion rate for similar tasks
+* User availability patterns (when they typically do deep work)
+* Task recency (created recently -> bump)
+
+**Output:** numeric `ai_score` 0–100 (higher means more recommended to do next)
+
+**Simple pseudocode**
+
+```text
+score = 0
+score += weight_due * (1 / (days_until_due + 1)) * 100
+score += weight_time * (1 / estimated_hours) * 100
+score += weight_user_priority * user_priority_value
+score += weight_history * (1 - historical_failure_rate)
+normalize score to 0..100
+```
+
+**Suggested default weights** (tuneable by experimentation):
+
+* due: 0.35
+* estimated_time: 0.2
+* user_priority: 0.25
+* history: 0.15
+
+**Implementation notes**
+
+* Compute on the server or locally at sync time.
+* Recompute when task fields change or daily at midnight / when user's calendar changes.
+* Provide an `ai_factors` debug view in Task Detail so users see why something was recommended.
+
+---
+
+## 6. Focus Mode: technical details & edge cases
+
+**Timer implementation best practices**
+
+* **Android:** use a foreground service to keep timers accurate in background. Schedule local notifications and keep a persistent notification when in focus mode (if platform policy requires it).
+* **iOS:** use `UNUserNotificationCenter` scheduled local notifications for completion and keep state locally. Background timers are unreliable; persist start timestamp and compute remaining on resume.
+
+**Pause/Resume behavior**
+
+* When paused, store `paused_at` and `remaining_seconds` in local storage.
+* If app killed, store the intended `end_time` and schedule a local notification.
+
+**Interruption handling**
+
+* Phone call or urgent system alerts: default behavior is to **pause** the session. Let user change default in settings.
+* If a user receives an important push (e.g., family), consider server-side suppression while `focus_mode` flag is set.
+
+**Data correctness**
+
+* On every session start/end/pause event, persist a snapshot locally and enqueue it for sync with the server.
+
+---
+
+## 7. APIs and backend contract examples
+
+**Auth**
+
+* `POST /api/v1/auth/signup` `{name, email, password}` → 201 `{ user, token }`
+* `POST /api/v1/auth/login` `{email, password}` → 200 `{ token }`
+
+**Tasks**
+
+* `GET /api/v1/tasks?filter=today` → 200 `{ tasks: [...] }`
+* `POST /api/v1/tasks` `{ title, description, estimated_minutes, due_date, tags }` → 201 `{ task }`
+* `PATCH /api/v1/tasks/:id` `{ ... }` → 200 `{ task }`
+* `DELETE /api/v1/tasks/:id` → 204
+
+**Focus sessions**
+
+* `POST /api/v1/tasks/:id/sessions` `{ start_time, end_time, duration_minutes, interrupted }` → 201 `{ session }`
+
+**AI**
+
+* `POST /api/v1/ai/score_tasks` `{ task_ids: [...] }` → 200 `{ scores: [...] }`
+* `POST /api/v1/ai/parse_text_into_tasks` `{ text }` → 200 `{ suggested_tasks: [...] }`
+
+**Focus state (for suppression)**
+
+* `POST /api/v1/users/:id/focus_state` `{ is_focusing: true/false, session_id }` → 200
+
+---
+
+## 8. Persistence, offline-first & sync strategy
+
+**Local storage**
+
+* Use SQLite / Realm / MMKV depending on platform.
+* Structure: tasks table, sessions table, pending_sync queue table.
+
+**Sync strategy**
+
+* Write locally first, push to server in background.
+* On conflict: prefer `last_write_wins` by `updated_at` with user-visible conflict resolution UI for edits on same task.
+* For collaborative features later: consider CRDT or OT.
+
+**Queue**
+
+* Each create/update/enqueue action adds a record to `pending_sync` with `attempts` and backoff.
+
+---
+
+## 9. Notifications & blocking behavior (platform notes)
+
+**What to block when Focus Mode is ON**
+
+* In-app banners / reminders / UI prompts
+* Push notifications for non-essential events (designate high-priority alerts that can override — user-configurable)
+
+**How to implement**
+
+* Local flag `is_focusing` stored client + server. The server should check this flag before sending non-critical pushes (requires server integration and user opt-in).
+* On the client, when `is_focusing`, suppress rendering of in-app notifications and display an unobtrusive banner: `Focus mode: notifications suppressed`.
+
+**Platform-specific notes**
+
+* **iOS**: apps cannot programmatically enable system Do Not Disturb. Use local suppression and schedule local notifications as fallback. Recommend user enable DND manually or show instructions and quick link to settings.
+* **Android**: with user permission, use Do Not Disturb APIs to request temporary DND (requires explanation and explicit opt-in). Alternatively, use a foreground service to prevent the app from being killed and rely on local notifications.
+
+**Fallback if permission denied**
+
+* Use prominent UX to explain the limits and rely on local scheduling and in-app suppression.
+
+---
+
+## 10. Security, privacy & compliance notes
+
+* Use secure transport (HTTPS/TLS) for all network calls.
+* Authenticate with JWT or OAuth2 flows; refresh tokens securely.
+* Store tokens in secure storage (Keychain / Android Keystore / SecureStore).
+* Encrypt local DB if tasks contain sensitive text.
+* Provide export & delete account flows to comply with GDPR-like expectations.
+* Default to opt-out for analytics and ML usage (explicit opt-in to send task content to AI cloud).
+
+---
+
+## 11. Analytics & events to track
+
+* `task_created`, `task_edited`, `task_deleted`
+* `ai_suggestion_shown`, `ai_suggestion_accepted`
+* `focus_started`, `focus_paused`, `focus_resumed`, `focus_completed`, `focus_abandoned`
+* `session_duration`
+* `daily_goal_met`
+
+**Note:** Only collect metadata by default. If collecting content for AI improvement, require explicit opt-in.
+
+---
+
+## 12. Accessibility & internationalization
+
+* Ensure color contrast and font size scaling.
+* All interactive elements should have accessible labels (VoiceOver / TalkBack).
+* Support right-to-left (RTL) languages.
+* Keep strings externalized for i18n.
+
+---
+
+## 13. Testing & QA checklist
+
+* Unit tests for AI scoring function (deterministic inputs → expected scores).
+* Timer tests: pause/resume, background, app kill & resume.
+* End-to-end flows: Quick add → Start focus → complete → session saved
+* Permission denial flows (notifications denied)
+* Offline test: create tasks offline, sync when online
+* Security: token expiry and refresh flows
+* Performance: Dashboard render with 1000 tasks (virtualize list)
+
+---
+
+## 14. Implementation roadmap & phases (MVP → 2.0 → 3.0)
+
+**MVP (3–6 weeks)**
+
+* Email auth
+* Local tasks + Quick-add
+* Dashboard with ordered TaskCards
+* Basic Focus Mode (timer + local notifications)
+* Session end summary + local persistence
+
+**v1.0 (2–3 months)**
+
+* AI priority scoring (server or local)
+* Chat-with-AI for task parsing (basic)
+* Sync & account backend
+* Basic analytics & settings
+
+**v2.0 (3–6 months)**
+
+* Rich AI assistance (multi-task parsing, suggested durations)
+* Cross-device synchronization & conflict resolution improvements
+* Integrations (calendar, Todoist, Google Tasks)
+* Gamification (streaks, achievements)
+
+---
+
+## 15. Developer component list & technical recommendations
+
+**Suggested stack**
+
+* UI: React Native + TypeScript (or Flutter)
+* State: Redux Toolkit / Zustand / Recoil
+* Local DB: SQLite via WatermelonDB/Realm or MMKV for key-value
+* Backend: Node.js + Postgres (or serverless Lambda + Dynamo)
+* AI: Hosted LLM (OpenAI-type) or in-house model; provide an API gateway for parsing and scoring
+
+**Core components**
+
+* `TaskCard` — props: `{task, onStart, onEdit, onSnooze}`
+* `QuickAddBar` — captures natural language, returns parsed fields
+* `AIChatModal` — conversational UI
+* `FocusTimer` — handles countdown, pause/resume, local persistence
+* `SessionSummaryModal` — shows after session
+* `SettingsPanel` — preferences
+
+**Design tokens**
+
+* Spacing scale: 4/8/12/16/24/32
+* Radius: small / medium / large
+* Color token: primary / accent / background / surface / error
+
+---
+
+## 16. Acceptance criteria & examples
+
+**Dashboard**
+
+* Given the user has tasks, when they open the Dashboard, then tasks must be displayed sorted by `ai_score` desc.
+
+**Quick-add**
+
+* Given the user enters `Write report 30m`, when they press enter, then a task with `estimated_minutes=30` appears.
+
+**Focus Mode**
+
+* Given the user starts a focus session, when time ends, a `focus_completed` event is logged and session is stored locally and synced.
+
+---
+
+## Appendix — Helpful code snippets
+
+**Simple local timer logic (pseudocode)**
+
+```js
+// start timer
+function startFocus(taskId, durationMinutes) {
+  const start = Date.now()
+  const end = start + durationMinutes * 60 * 1000
+  saveLocal({ taskId, start, end })
+  scheduleLocalNotification(end, 'Focus session complete')
+}
+
+// on app resume
+function resume() {
+  const session = loadLocalSession()
+  if (!session) return
+  const remaining = session.end - Date.now()
+  if (remaining <= 0) { handleSessionEnd(session) }
+  else startCountdown(remaining)
+}
+```
+
+**Example task creation request**
+
+```
+POST /api/v1/tasks
+{
+  "title": "Write weekly report",
+  "estimated_minutes": 30,
+  "due_date": "2025-10-10T09:00:00Z"
+}
+```
+
+---
+
+## Final notes for the developer
+
+* Keep the AI transparent and optional. Allow power users to tune the weights or disable AI suggestions.
+* Aim for resilient timer behavior: local persistence + scheduled notifications + server sync.
+* Provide an easy way to inspect AI scores & factors to build user trust.
+
+---
+
+If you want, I can now:
+
+* generate UI wireframes for the main screens (low-fi or high-fi),
+* produce a prioritized implementation task list (Jira/Trello friendly), or
+* write the API spec in OpenAPI format.
+
+Tell me which of these you'd like added to this document and I will extend it accordingly.
